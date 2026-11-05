@@ -1,32 +1,35 @@
-FROM python:3.9
+FROM python:3.10.11-slim-bullseye
 
 WORKDIR /app
 
-#RUN apt-get update && apt-get install --no-install-recommends -y git wget libpq-dev gcc python3-dev && pip install psycopg2
-RUN pip install --upgrade pip
+RUN echo "deb http://archive.debian.org/debian bullseye main" > /etc/apt/sources.list && \
+    apt-get clean && \
+    apt-get update -o Acquire::Check-Valid-Time=false && \
+    apt-get install --no-install-recommends -y \
+    libpq-dev wget gcc g++ make cmake build-essential python3-dev git curl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
+# Python仮想環境
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# pip / wheel の更新
+# setuptoolsはここでは更新しない
+RUN pip install --no-cache-dir --upgrade pip wheel
+
+# requirements
 COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
+# pkg_resources対策：setuptoolsのバージョンを固定
+RUN pip install --no-cache-dir --force-reinstall setuptools==80.9.0
+
+# SuperAGIソース
 COPY . .
 
-# Downloads the tools
-RUN python superagi/tool_manager.py
+RUN python superagi/tool_manager.py || true
+RUN chmod +x install_tool_dependencies.sh || true
 
-# Set executable permissions for install_tool_dependencies.sh
-RUN chmod +x install_tool_dependencies.sh
-
-# Install dependencies
-RUN ./install_tool_dependencies.sh
-
-# Downloads the tools
-RUN python superagi/tool_manager.py
-
-# Set executable permissions for install_tool_dependencies.sh
-RUN chmod +x install_tool_dependencies.sh
-
-# Install dependencies
-RUN ./install_tool_dependencies.sh
-
-
-CMD ["celery", "-A", "superagi.worker", "worker", "--beat","--loglevel=info"]
+CMD ["celery", "-A", "superagi.worker", "worker", "--beat", "--loglevel=info"]

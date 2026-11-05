@@ -1,39 +1,35 @@
-# Stage 1: Compile image
-FROM python:3.10-slim-bullseye AS compile-image
+FROM python:3.10.11-slim-bullseye
+
 WORKDIR /app
 
-RUN apt-get update && \
-    apt-get install --no-install-recommends -y wget libpq-dev gcc g++ && \
+RUN echo "deb http://archive.debian.org/debian bullseye main" > /etc/apt/sources.list && \
+    apt-get clean && \
+    apt-get update -o Acquire::Check-Valid-Time=false && \
+    apt-get install --no-install-recommends -y \
+    libpq-dev wget gcc g++ make cmake build-essential python3-dev git curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# Python仮想環境
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# pip / wheel の更新
+# setuptoolsはここでは更新しない
+RUN pip install --no-cache-dir --upgrade pip wheel
+
+# requirements
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
 
-RUN python3.10 -c "import nltk; nltk.download('punkt')" && \
-  python3.10 -c "import nltk; nltk.download('averaged_perceptron_tagger')"
+RUN pip install --no-cache-dir -r requirements.txt
 
+# pkg_resources対策：setuptoolsのバージョンを固定
+RUN pip install --no-cache-dir --force-reinstall setuptools==80.9.0
+
+# SuperAGIソース
 COPY . .
 
-RUN chmod +x ./entrypoint.sh ./wait-for-it.sh ./install_tool_dependencies.sh ./entrypoint_celery.sh
+RUN python superagi/tool_manager.py || true
+RUN chmod +x install_tool_dependencies.sh || true
 
-# Stage 2: Build image
-FROM python:3.10-slim-bullseye AS build-image
-WORKDIR /app
-
-RUN apt-get update && \
-    apt-get install --no-install-recommends -y libpq-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY --from=compile-image /opt/venv /opt/venv
-COPY --from=compile-image /app /app
-COPY --from=compile-image /root/nltk_data /root/nltk_data
-
-ENV PATH="/opt/venv/bin:$PATH"
-
-EXPOSE 8001
+CMD ["celery", "-A", "superagi.worker", "worker", "--beat", "--loglevel=info"]
